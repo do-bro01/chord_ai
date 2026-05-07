@@ -1,0 +1,5 @@
+venv/
+soundfonts/
+__pycache__/
+*.pyc
+.env
