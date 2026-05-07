@@ -3,3 +3,21 @@ soundfonts/
 __pycache__/
 *.pyc
 .env
+.env.*
+
+# DB
+chord_ai.db
+chord_ai.db-journal
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/out/
+
+# Output
+output/
+uploads/
+
+# OS
+.DS_Store
