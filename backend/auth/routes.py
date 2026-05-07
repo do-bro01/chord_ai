@@ -125,9 +125,12 @@ def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)) -
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(response: Response) -> Response:
+def logout() -> Response:
+    # 쿠키 삭제 헤더는 실제로 반환되는 Response에 직접 설정해야 한다.
+    # response: Response 의존성에 set 해놓고 새 Response를 return하면 헤더가 유실된다.
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
     _clear_session_cookie(response)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return response
 
 
 @router.get("/me", response_model=UserOut)

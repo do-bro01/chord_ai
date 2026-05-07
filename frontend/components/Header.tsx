@@ -39,12 +39,14 @@ export default function Header() {
   }, []);
 
   const onLogout = async () => {
+    setOpen(false);
     try {
       await authApi.logout();
     } catch {
       // ignore
     }
-    router.push("/login");
+    setUser(null);
+    router.replace("/login");
     router.refresh();
   };
 

@@ -10,19 +10,21 @@ import Input from "@/components/ui/Input";
 import GoogleButton from "@/components/auth/GoogleButton";
 import { ApiError, authApi } from "@/lib/api";
 
-type Step = 1 | 2 | 3;
+type Step = 1 | 2 | 3 | 4;
 
 export default function SignupPage() {
   const [step, setStep] = useState<Step>(1);
   const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
 
   return (
     <Card className="p-8">
       <h1 className="text-2xl font-light tracking-tight mb-1">회원가입</h1>
       <p className="text-sm text-white/50 mb-6">
         {step === 1 && "이메일로 인증코드를 받아주세요"}
-        {step === 2 && `${email} 로 보낸 코드와 비밀번호를 입력해주세요`}
-        {step === 3 && "환영합니다"}
+        {step === 2 && `${email} 로 보낸 인증코드를 입력하세요`}
+        {step === 3 && "사용할 비밀번호를 설정해주세요"}
+        {step === 4 && "환영합니다"}
       </p>
 
       <StepIndicator step={step} />
@@ -38,11 +40,21 @@ export default function SignupPage() {
         {step === 2 && (
           <CodeStep
             email={email}
+            code={code}
+            setCode={setCode}
             onBack={() => setStep(1)}
-            onComplete={() => setStep(3)}
+            onNext={() => setStep(3)}
           />
         )}
-        {step === 3 && <DoneStep />}
+        {step === 3 && (
+          <PasswordStep
+            email={email}
+            code={code}
+            onBack={() => setStep(2)}
+            onComplete={() => setStep(4)}
+          />
+        )}
+        {step === 4 && <DoneStep />}
       </div>
 
       {step === 1 ? (
@@ -64,7 +76,7 @@ export default function SignupPage() {
 function StepIndicator({ step }: { step: Step }) {
   return (
     <div className="flex items-center justify-center gap-2">
-      {[1, 2, 3].map((n) => (
+      {[1, 2, 3, 4].map((n) => (
         <span
           key={n}
           className={`h-1.5 rounded-full transition-all ${
@@ -134,24 +146,29 @@ function EmailStep({
   );
 }
 
-// ---------- Step 2: 코드 + 비밀번호 ----------
+// ---------- Step 2: 인증코드 ----------
 
 const COOLDOWN = 60;
 
 function CodeStep({
   email,
+  code,
+  setCode,
   onBack,
-  onComplete,
+  onNext,
 }: {
   email: string;
+  code: string;
+  setCode: (v: string) => void;
   onBack: () => void;
-  onComplete: () => void;
+  onNext: () => void;
 }) {
-  const router = useRouter();
-  const [code, setCode] = useState<string[]>(Array(6).fill(""));
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const initialDigits = (() => {
+    const d = Array(6).fill("");
+    for (let i = 0; i < Math.min(code.length, 6); i++) d[i] = code[i];
+    return d;
+  })();
+  const [digits, setDigits] = useState<string[]>(initialDigits);
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(COOLDOWN);
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
@@ -164,14 +181,14 @@ function CodeStep({
 
   const setDigit = (i: number, v: string) => {
     const digit = v.replace(/\D/g, "").slice(-1);
-    const next = [...code];
+    const next = [...digits];
     next[i] = digit;
-    setCode(next);
+    setDigits(next);
     if (digit && i < 5) inputs.current[i + 1]?.focus();
   };
 
   const onKeyDown = (i: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Backspace" && !code[i] && i > 0) {
+    if (e.key === "Backspace" && !digits[i] && i > 0) {
       inputs.current[i - 1]?.focus();
     }
   };
@@ -182,7 +199,7 @@ function CodeStep({
     e.preventDefault();
     const next = Array(6).fill("");
     for (let i = 0; i < text.length; i++) next[i] = text[i];
-    setCode(next);
+    setDigits(next);
     inputs.current[Math.min(text.length, 5)]?.focus();
   };
 
@@ -197,38 +214,16 @@ function CodeStep({
     }
   };
 
-  const onSubmit = async (e: FormEvent) => {
+  const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-
-    const codeStr = code.join("");
+    const codeStr = digits.join("");
     if (codeStr.length !== 6) {
       setError("6자리 인증코드를 입력해주세요.");
       return;
     }
-    if (password.length < 8) {
-      setError("비밀번호는 8자 이상이어야 합니다.");
-      return;
-    }
-    if (password !== confirm) {
-      setError("비밀번호가 일치하지 않습니다.");
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      await authApi.verifySignup(email, codeStr, password);
-      onComplete();
-      setTimeout(() => {
-        router.push("/");
-        router.refresh();
-      }, 1200);
-    } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
-      else setError("가입 처리 중 오류가 발생했습니다.");
-    } finally {
-      setSubmitting(false);
-    }
+    setCode(codeStr);
+    onNext();
   };
 
   return (
@@ -236,7 +231,7 @@ function CodeStep({
       <div className="flex flex-col gap-2">
         <label className="text-xs text-white/60 font-medium">인증코드</label>
         <div className="flex gap-2 justify-between">
-          {code.map((d, i) => (
+          {digits.map((d, i) => (
             <input
               key={i}
               ref={(el) => {
@@ -252,6 +247,9 @@ function CodeStep({
             />
           ))}
         </div>
+        {error ? (
+          <p className="text-xs text-red-300 mt-1">{error}</p>
+        ) : null}
         <button
           type="button"
           onClick={resend}
@@ -262,6 +260,68 @@ function CodeStep({
         </button>
       </div>
 
+      <div className="flex gap-2 mt-2">
+        <Button type="button" variant="secondary" onClick={onBack} className="flex-1">
+          이전
+        </Button>
+        <Button type="submit" className="flex-1">
+          다음
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ---------- Step 3: 비밀번호 ----------
+
+function PasswordStep({
+  email,
+  code,
+  onBack,
+  onComplete,
+}: {
+  email: string;
+  code: string;
+  onBack: () => void;
+  onComplete: () => void;
+}) {
+  const router = useRouter();
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (password.length < 8) {
+      setError("비밀번호는 8자 이상이어야 합니다.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("비밀번호가 일치하지 않습니다.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await authApi.verifySignup(email, code, password);
+      onComplete();
+      setTimeout(() => {
+        router.push("/");
+        router.refresh();
+      }, 1200);
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.message);
+      else setError("가입 처리 중 오류가 발생했습니다.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-5">
       <Input
         name="password"
         type="password"
@@ -295,7 +355,7 @@ function CodeStep({
   );
 }
 
-// ---------- Step 3: 완료 ----------
+// ---------- Step 4: 완료 ----------
 
 function DoneStep() {
   return (
