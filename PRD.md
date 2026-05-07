@@ -10,10 +10,10 @@
 
 | 항목 | 내용 |
 |---|---|
-| 프로젝트 경로 | `/Users/do_bro/GitHub/music_ai` |
-| 가상환경 | `/Users/do_bro/GitHub/music_ai/venv` |
+| 프로젝트 경로 | `/Users/do_bro/GitHub/chord_ai` |
+| 가상환경 | `/Users/do_bro/GitHub/chord_ai/venv` |
 | 가상환경 활성화 | `source venv/bin/activate` |
-| SoundFont 경로 | `/Users/do_bro/GitHub/music_ai/soundfonts/FluidR3_GM.sf2` |
+| SoundFont 경로 | `/Users/do_bro/GitHub/chord_ai/soundfonts/FluidR3_GM.sf2` |
 | 실행 환경 | 로컬 macOS (Apple M3 Pro, 18GB) |
 
 ---
@@ -59,20 +59,20 @@
 ### 기능 4. 악보 생성
 - `music21`으로 편곡된 코드 진행을 악보로 변환
 - MuseScore로 렌더링하여 PDF 또는 PNG로 출력
-- 출력 파일 저장 경로: `/Users/do_bro/GitHub/music_ai/output/`
+- 출력 파일 저장 경로: `/Users/do_bro/GitHub/chord_ai/output/`
 
 ### 기능 5. 오디오 파일 생성
 - `pretty_midi`로 편곡된 코드 진행을 MIDI로 변환
 - `pyfluidsynth` + FluidR3_GM.sf2 SoundFont로 MIDI → WAV 렌더링
 - 코드를 하나씩 순서대로 들을 수 있도록 각 코드 사이에 간격 부여
-- 출력 파일 저장 경로: `/Users/do_bro/GitHub/music_ai/output/`
+- 출력 파일 저장 경로: `/Users/do_bro/GitHub/chord_ai/output/`
 
 ---
 
 ## 디렉토리 구조
 
 ```
-music_ai/
+chord_ai/
 ├── venv/
 ├── soundfonts/
 │   └── FluidR3_GM.sf2
