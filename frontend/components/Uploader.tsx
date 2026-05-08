@@ -2,7 +2,7 @@
 
 import { ChangeEvent, DragEvent, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
-import { ApiError, audioApi } from "@/lib/api";
+import { ApiError, audioApi, Bar } from "@/lib/api";
 
 const ACCEPTED = ["mp3", "wav", "flac", "m4a", "ogg"];
 const ACCEPT_ATTR = ACCEPTED.map((e) => `.${e}`).join(",");
@@ -18,6 +18,22 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec - m * 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+const BARS_PER_ROW = 4;
+
+function chunkBars(bars: Bar[], size: number): Bar[][] {
+  const rows: Bar[][] = [];
+  for (let i = 0; i < bars.length; i += size) {
+    rows.push(bars.slice(i, i + size));
+  }
+  return rows;
+}
+
 export default function Uploader() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -25,6 +41,7 @@ export default function Uploader() {
   const [error, setError] = useState<string | null>(null);
   const [converting, setConverting] = useState(false);
   const [chords, setChords] = useState<string[] | null>(null);
+  const [bars, setBars] = useState<Bar[] | null>(null);
 
   const acceptFile = (f: File) => {
     if (!isAudio(f.name)) {
@@ -34,6 +51,7 @@ export default function Uploader() {
     }
     setError(null);
     setChords(null);
+    setBars(null);
     setFile(f);
   };
 
@@ -72,12 +90,14 @@ export default function Uploader() {
     setFile(null);
     setError(null);
     setChords(null);
+    setBars(null);
   };
 
   const onReset = () => {
     setFile(null);
     setError(null);
     setChords(null);
+    setBars(null);
   };
 
   const onConvert = async () => {
@@ -87,6 +107,7 @@ export default function Uploader() {
     try {
       const result = await audioApi.extract(file);
       setChords(result.chords);
+      setBars(result.bars);
     } catch (err) {
       if (err instanceof ApiError) setError(err.message);
       else setError("코드 추출 중 오류가 발생했습니다.");
@@ -96,23 +117,67 @@ export default function Uploader() {
   };
 
   if (chords) {
+    const rows = bars && bars.length > 0 ? chunkBars(bars, BARS_PER_ROW) : [];
     return (
       <div className="flex flex-col gap-6">
         <div className="rounded-3xl border border-white/10 bg-[var(--background-elevated)]/50 px-8 py-10">
           <p className="text-xs text-white/40 mb-2">추출된 코드 진행</p>
           <p className="text-xs text-white/50 mb-6 truncate">{file?.name}</p>
-          <div className="flex flex-wrap gap-2">
-            {chords.map((c, i) => (
-              <span
-                key={i}
-                className="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-sm font-mono text-white/90"
-              >
-                {c}
-              </span>
-            ))}
-          </div>
-          <p className="mt-6 text-xs text-white/30 font-mono">
-            {chords.join("  -  ")}
+
+          {rows.length > 0 ? (
+            <div className="flex flex-col gap-1.5 font-mono text-sm">
+              {rows.map((row, ri) => (
+                <div
+                  key={ri}
+                  className="flex items-center gap-3 text-white/85"
+                >
+                  <span className="shrink-0 w-12 text-xs text-white/35 tabular-nums">
+                    {formatTime(row[0].start)}
+                  </span>
+                  <div className="flex-1 grid grid-cols-4 items-center">
+                    {row.map((bar, idx) => (
+                      <div
+                        key={bar.index}
+                        className="flex items-center min-w-0"
+                        title={`마디 ${bar.index} (${bar.start.toFixed(2)}s~${bar.end.toFixed(2)}s)`}
+                      >
+                        <span className="text-white/25 shrink-0 px-2">|</span>
+                        <div className="flex-1 grid grid-cols-4 items-center">
+                          {bar.beats.map((slot, i) => (
+                            <span
+                              key={i}
+                              className="text-center whitespace-nowrap overflow-hidden text-ellipsis"
+                            >
+                              {slot.chord ?? (
+                                <span className="text-white/15">·</span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                        {idx === row.length - 1 && (
+                          <span className="text-white/25 shrink-0 px-2">|</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {chords.map((c, i) => (
+                <span
+                  key={i}
+                  className="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-sm font-mono text-white/90"
+                >
+                  {c}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <p className="mt-6 text-xs text-white/30">
+            총 {bars?.length ?? 0}마디 · {chords.length}개 코드 변경
           </p>
         </div>
         <div className="flex justify-center">

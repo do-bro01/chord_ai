@@ -23,9 +23,24 @@ SUPPORTED_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
+class BeatSlot(BaseModel):
+    beat: str             # '1' | '2' | '3' | '4'
+    chord: str | None     # None = 직전 비트와 같은 코드(지속)
+    time: float           # 비트 시각(초)
+
+
+class Bar(BaseModel):
+    index: int            # 1-based 마디 번호
+    start: float          # 시작 시점(초)
+    end: float            # 끝 시점(초)
+    beats: list[BeatSlot] # 4비트 슬롯 (또는 3박자 등 곡에 맞춤)
+    chords: list[str]     # 이 마디 distinct 코드 (호환용)
+
+
 class ExtractOut(BaseModel):
     filename: str
-    chords: list[str]
+    chords: list[str]     # 전체 진행(인접 압축) — 호환용
+    bars: list[Bar]       # 마디 단위 비트 슬롯 chord chart
 
 
 def _suffix_from_filename(name: str) -> str:
@@ -76,11 +91,13 @@ async def extract_chords(
             tmp.write(chunk)
 
     try:
-        # demucs/autochord/tensorflow는 import 비용이 매우 커서 요청 시점에 늦게 로드한다.
+        # demucs/chordino/tensorflow는 import 비용이 매우 커서 요청 시점에 늦게 로드한다.
         # 첫 호출에서는 모델 가중치 다운로드(htdemucs ~80MB)도 발생할 수 있다.
-        from audio_analysis import analyze  # type: ignore
+        from audio_analysis import analyze_with_bars  # type: ignore
 
-        chords = analyze(tmp_path)
+        result = analyze_with_bars(tmp_path)
+        chords = result["chords"]
+        bars_raw = result["bars"]
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -107,4 +124,5 @@ async def extract_chords(
             },
         )
 
-    return ExtractOut(filename=file.filename, chords=chords)
+    bars = [Bar(**b) for b in bars_raw]
+    return ExtractOut(filename=file.filename, chords=chords, bars=bars)

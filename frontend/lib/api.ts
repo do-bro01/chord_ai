@@ -56,9 +56,24 @@ export interface User {
   created_at: string;
 }
 
+export interface BeatSlot {
+  beat: string;          // '1' | '2' | '3' | '4'
+  chord: string | null;  // null이면 직전 비트와 같은 코드 (지속)
+  time: number;          // 비트 시각(초)
+}
+
+export interface Bar {
+  index: number;
+  start: number;
+  end: number;
+  beats: BeatSlot[];     // 비트 슬롯 (보통 4개)
+  chords: string[];      // 호환용 — 이 마디 distinct 코드
+}
+
 export interface ExtractResult {
   filename: string;
-  chords: string[];
+  chords: string[];  // 호환용 — 전체 진행
+  bars: Bar[];       // 마디 단위 그룹핑
 }
 
 export const audioApi = {

@@ -231,3 +231,33 @@ def analyze(path: str | Path) -> List[str]:
     timed = analyze_with_timing(path)
     chords = [c for _, _, c in timed]
     return _compress_consecutive(chords)
+
+
+def analyze_with_bars(path: str | Path) -> dict:
+    """파일 → 추출 결과 + 마디 그룹핑.
+
+    반환:
+      {
+        "chords": [str, ...],            # 압축된 전체 코드 진행
+        "timed":  [(start, end, chord)], # 시간축 segments
+        "bars":   [Bar, ...],            # 마디별 코드 리스트 (bar_grouper 참고)
+      }
+
+    backend에서 chord chart UI에 사용. main.py CLI는 'chords'만 필요해서 analyze() 그대로 사용.
+    """
+    from bar_grouper import grouped_bars
+
+    timed = analyze_with_timing(path)
+    chords = _compress_consecutive([c for _, _, c in timed])
+
+    try:
+        bars = grouped_bars(path, timed)
+    except Exception as e:
+        log.warning("bar grouping 실패 (%s) — bars=[] 반환", e)
+        bars = []
+
+    return {
+        "chords": chords,
+        "timed": timed,
+        "bars": bars,
+    }
