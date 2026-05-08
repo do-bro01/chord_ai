@@ -76,7 +76,8 @@ async def extract_chords(
             tmp.write(chunk)
 
     try:
-        # librosa는 import 비용이 커서 요청 시점에 늦게 로드한다.
+        # demucs/autochord/tensorflow는 import 비용이 매우 커서 요청 시점에 늦게 로드한다.
+        # 첫 호출에서는 모델 가중치 다운로드(htdemucs ~80MB)도 발생할 수 있다.
         from audio_analysis import analyze  # type: ignore
 
         chords = analyze(tmp_path)
