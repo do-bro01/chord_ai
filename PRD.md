@@ -12,25 +12,42 @@
 |---|---|
 | 프로젝트 경로 | `/Users/do_bro/GitHub/chord_ai` |
 | 가상환경 | `/Users/do_bro/GitHub/chord_ai/venv` |
+| Python 버전 | **3.12** (autochord가 의존하는 TensorFlow가 3.13/3.14 wheel 미지원) |
 | 가상환경 활성화 | `source venv/bin/activate` |
 | SoundFont 경로 | `/Users/do_bro/GitHub/chord_ai/soundfonts/FluidR3_GM.sf2` |
 | 실행 환경 | 로컬 macOS (Apple M3 Pro, 18GB) |
+| ML 가속 | PyTorch는 MPS(Apple Metal) 사용, demucs는 자동 감지 |
 
 ---
 
 ## 설치된 도구 및 라이브러리
 
-**Python 라이브러리**
-- `librosa` — 오디오 로드, 코드 추출
+**Python 라이브러리 — 오디오 분석/생성**
+- `librosa` — 오디오 로드, 보조 분석
+- `demucs` — 음원 stem 분리(보컬·드럼·베이스·기타 분리, htdemucs 모델)
+- `autochord` — 코드 인식(BTC: Bidirectional Transformer for Chord Recognition)
+- `torch` — demucs 백엔드(MPS 가속)
+- `tensorflow` — autochord 백엔드
 - `music21` — 악보 생성, MIDI 변환
 - `pretty_midi` — MIDI 조작
 - `pyfluidsynth` — fluidsynth Python 제어
 - `numpy`, `scipy` — 수치 연산
 - `openai` — LLM 편곡 요청
 
+**Python 라이브러리 — 웹 백엔드**
+- `fastapi`, `uvicorn` — API 서버
+- `sqlalchemy`, `pydantic-settings` — DB/설정
+- `bcrypt`, `pyjwt` — 인증
+- `python-multipart` — 파일 업로드
+- `httpx`, `google-auth`, `email-validator` — OAuth/이메일
+
 **시스템 도구**
 - `fluidsynth` — MIDI → WAV 렌더링 (brew 설치)
 - `MuseScore` — 악보 렌더링 및 PDF 출력 (brew cask 설치)
+
+**ML 모델 (첫 실행 시 자동 다운로드)**
+- htdemucs (~250MB, `~/.cache/torch/hub/checkpoints/`)
+- autochord BTC weights (~수십 MB, 패키지 내장 또는 첫 실행 시 다운로드)
 
 ---
 
@@ -41,10 +58,15 @@
 - `librosa.load()`로 로드, 16kHz 모노로 리샘플링
 - 로드 실패 시 명확한 에러 메시지 출력
 
-### 기능 2. 코드 진행 추출
-- `librosa`의 크로마 특징(chroma feature) 기반으로 각 마디별 코드 추출
-- 출력 형식 예시: `Am - F - C - G`
-- 추출된 코드 진행을 사용자에게 텍스트로 출력
+### 기능 2. 코드 진행 추출 (demucs + autochord 파이프라인)
+1. **stem 분리** — `demucs(htdemucs)`로 vocals / drums / bass / other 4채널 분리
+2. **화성 채널 합성** — `bass + other`를 합쳐 화성 정보만 남긴 신호 생성 (보컬·드럼 노이즈 제거)
+3. **코드 인식** — `autochord`(BTC 모델)로 시간축 코드 라벨 추출 → `[(start, end, "Am"), (start, end, "F"), ...]`
+4. **마디 단위 정리** — 비트/마디 단위로 묶어 동일 코드 압축
+5. **출력 형식** — 예: `Am - F - C - G`
+6. **인식 가능 코드** — major, minor, 7th, maj7, min7, dim, aug, sus 등 BTC 모델 라벨 셋
+7. **fallback** — demucs 실패 시 원본 신호로 autochord 직접 실행
+8. 추출된 코드 진행을 사용자에게 텍스트로 출력
 
 ### 기능 3. LLM 편곡 요청 (OpenAI API)
 - 추출된 코드 진행을 컨텍스트로 OpenAI API에 전달
@@ -74,17 +96,22 @@
 
 ```
 chord_ai/
-├── venv/
+├── venv/                    # Python 3.12
 ├── soundfonts/
 │   └── FluidR3_GM.sf2
 ├── output/                  # 생성된 악보, 오디오 저장
 ├── uploads/                 # 업로드된 음원 파일 저장
-├── main.py                  # 메인 실행 파일
-├── audio_analysis.py        # 기능 1, 2: 오디오 로드 + 코드 추출
+├── main.py                  # CLI 메인 실행 파일
+├── audio_analysis.py        # 기능 1, 2: demucs + autochord 파이프라인
 ├── llm_arranger.py          # 기능 3: OpenAI API 편곡 요청
 ├── score_generator.py       # 기능 4: 악보 생성
 ├── audio_renderer.py        # 기능 5: 오디오 파일 생성
-├── .env                     # OPENAI_API_KEY 저장
+├── backend/                 # FastAPI 웹 백엔드
+│   ├── api/audio.py         # POST /api/audio/extract
+│   ├── auth/                # 인증
+│   └── main.py              # uvicorn 진입점
+├── frontend/                # Next.js 프론트엔드
+├── .env                     # 환경변수
 └── requirements.txt
 ```
 
@@ -93,21 +120,24 @@ chord_ai/
 ## 실행 흐름
 
 ```
-python main.py 음원파일.mp3
+[CLI]   python main.py 음원파일.mp3
+[Web]   프론트엔드 업로드 → POST /api/audio/extract
        ↓
 [오디오 로드] librosa로 로드 및 전처리
        ↓
-[코드 추출] 크로마 특징 기반 코드 진행 추출
+[stem 분리] demucs(htdemucs) → vocals/drums/bass/other
+       ↓
+[화성 합성] bass + other 채널 합치기
+       ↓
+[코드 인식] autochord(BTC) → 시간축 코드 라벨
+       ↓
+[정리] 마디 단위 묶음 + 동일 코드 압축
        ↓
 출력: "추출된 코드 진행: Am - F - C - G"
        ↓
-[LLM 대화] "편곡하시겠습니까?"
+[LLM 대화] "편곡하시겠습니까?" + 사용자 자연어 요청
        ↓
-사용자 입력: "슬픈 느낌의 기타 솔로로 편곡해줘"
-       ↓
-[OpenAI API] 편곡된 코드 진행 반환
-       ↓
-출력: "편곡된 코드 진행: Am - Em - Dm - E"
+[OpenAI API] 편곡된 코드 진행 반환 → "Am - Em - Dm - E"
        ↓
 [악보 생성] music21 + MuseScore → PDF/PNG
        ↓
