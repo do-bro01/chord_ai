@@ -56,6 +56,29 @@ export interface User {
   created_at: string;
 }
 
+export interface ExtractResult {
+  filename: string;
+  chords: string[];
+}
+
+export const audioApi = {
+  extract: async (file: File): Promise<ExtractResult> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/api/audio/extract`, {
+      method: "POST",
+      credentials: "include",
+      body: form,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) {
+      throw new ApiError(res.status, data?.detail ?? "코드 추출에 실패했습니다.");
+    }
+    return data as ExtractResult;
+  },
+};
+
 export const authApi = {
   requestSignupCode: (email: string) =>
     apiFetch<void>("/auth/signup/request-code", {

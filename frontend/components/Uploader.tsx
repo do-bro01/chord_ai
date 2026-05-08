@@ -2,6 +2,7 @@
 
 import { ChangeEvent, DragEvent, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
+import { ApiError, audioApi } from "@/lib/api";
 
 const ACCEPTED = ["mp3", "wav", "flac", "m4a", "ogg"];
 const ACCEPT_ATTR = ACCEPTED.map((e) => `.${e}`).join(",");
@@ -22,8 +23,8 @@ export default function Uploader() {
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [converting, setConverting] = useState(false);
+  const [chords, setChords] = useState<string[] | null>(null);
 
   const acceptFile = (f: File) => {
     if (!isAudio(f.name)) {
@@ -32,11 +33,12 @@ export default function Uploader() {
       return;
     }
     setError(null);
-    setNotice(null);
+    setChords(null);
     setFile(f);
   };
 
   const onClickArea = () => {
+    if (chords) return;
     inputRef.current?.click();
   };
 
@@ -47,6 +49,7 @@ export default function Uploader() {
   };
 
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (chords) return;
     e.preventDefault();
     setDragOver(true);
   };
@@ -57,6 +60,7 @@ export default function Uploader() {
   };
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    if (chords) return;
     e.preventDefault();
     setDragOver(false);
     const f = e.dataTransfer.files?.[0];
@@ -67,18 +71,61 @@ export default function Uploader() {
     e.stopPropagation();
     setFile(null);
     setError(null);
-    setNotice(null);
+    setChords(null);
+  };
+
+  const onReset = () => {
+    setFile(null);
+    setError(null);
+    setChords(null);
   };
 
   const onConvert = async () => {
     if (!file) return;
     setConverting(true);
-    setNotice(null);
-    // 백엔드 변환 엔드포인트 연결 전 임시 처리.
-    await new Promise((r) => setTimeout(r, 600));
-    setConverting(false);
-    setNotice("코드 추출 · 편곡 기능은 곧 활성화됩니다.");
+    setError(null);
+    try {
+      const result = await audioApi.extract(file);
+      setChords(result.chords);
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.message);
+      else setError("코드 추출 중 오류가 발생했습니다.");
+    } finally {
+      setConverting(false);
+    }
   };
+
+  if (chords) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="rounded-3xl border border-white/10 bg-[var(--background-elevated)]/50 px-8 py-10">
+          <p className="text-xs text-white/40 mb-2">추출된 코드 진행</p>
+          <p className="text-xs text-white/50 mb-6 truncate">{file?.name}</p>
+          <div className="flex flex-wrap gap-2">
+            {chords.map((c, i) => (
+              <span
+                key={i}
+                className="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-sm font-mono text-white/90"
+              >
+                {c}
+              </span>
+            ))}
+          </div>
+          <p className="mt-6 text-xs text-white/30 font-mono">
+            {chords.join("  -  ")}
+          </p>
+        </div>
+        <div className="flex justify-center">
+          <Button type="button" variant="secondary" onClick={onReset} className="px-8">
+            다른 음원 분석하기
+          </Button>
+        </div>
+        <p className="text-center text-xs text-white/30">
+          편곡 · 악보 · 오디오 생성 기능은 곧 활성화됩니다
+        </p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -108,7 +155,8 @@ export default function Uploader() {
             <button
               type="button"
               onClick={onClear}
-              className="mt-2 text-xs text-white/50 hover:text-white underline"
+              disabled={converting}
+              className="mt-2 text-xs text-white/50 hover:text-white underline disabled:opacity-50"
             >
               다른 파일 선택
             </button>
@@ -141,15 +189,17 @@ export default function Uploader() {
           type="button"
           onClick={onConvert}
           loading={converting}
-          disabled={!file}
+          disabled={!file || converting}
           className="px-8"
         >
-          코드로 변환
+          {converting ? "분석 중..." : "코드로 변환"}
         </Button>
       </div>
 
-      {notice ? (
-        <p className="mt-3 text-center text-xs text-white/50">{notice}</p>
+      {converting ? (
+        <p className="mt-3 text-center text-xs text-white/40">
+          음원 분석에는 길이에 따라 수십 초가 걸릴 수 있습니다
+        </p>
       ) : null}
     </>
   );
