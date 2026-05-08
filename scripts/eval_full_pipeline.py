@@ -8,6 +8,9 @@
   5. 인접 동일 코드 병합
 
 각 단계 전후를 비교해서 어떤 단계가 어떤 효과를 냈는지 분석.
+
+사용법(프로젝트 루트에서):
+    python scripts/eval_full_pipeline.py "test_mp3/곡.mp3"
 """
 
 from __future__ import annotations
@@ -17,6 +20,11 @@ import json
 import sys
 import time
 from pathlib import Path
+
+# scripts/에서 실행되므로 부모 디렉토리(프로젝트 루트)를 import path에 추가
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from chordino_extractor import analyze_with_timing
 from chord_postprocess import (
