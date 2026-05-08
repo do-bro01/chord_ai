@@ -245,6 +245,184 @@ pip install setuptools wheel
 
 ---
 
+## 8. 코드 추출 정확도 한계 (2차) → autochord → chordino 전환
+
+**원래 계획**
+demucs + autochord 조합으로 24개 코드(maj/min/7/maj7/m7/dim/aug/sus 등) 인식. 7th 텐션도 잡힐 거라 기대.
+
+**발생한 문제**
+유재하 - 사랑하기 때문에 어쿠스틱으로 평가하니 **autochord가 7th 텐션을 한 번도 출력 안 함**. 모든 코드가 maj/min 트라이어드로만 나옴(108 segments 중 maj7/m7/7 라벨 0개). 또 일관된 substitution 오류:
+- `CM7` 자리에서 `Em` 출력 (상부구조 공유 EGB)
+- `Bm7` 자리에서 `Em` 또는 `D` 출력
+- `E7(#5)` 자리에서 `D` 또는 `Em` 출력
+
+**원인**
+autochord의 BTC(Bidirectional Transformer for Chord Recognition) 모델은 라벨셋 자체에 7th을 갖고 있지만, 학습 데이터 분포가 트라이어드 위주여서 실제 추론 시에는 7th을 거의 안 뱉는 경향. K-pop 발라드처럼 7th 위주 화성은 표현력이 모자람.
+
+**해결**
+같은 곡에 **chordino(NNLS-Chroma vamp 플러그인) 적용**. chordino의 강점:
+- `usehartesyntax=1` 옵션으로 `C:maj7`, `A:min7`, `D:7` 같은 Harte 표기 직접 출력
+- E7(#5)은 `Eaug`로 잡음(공유 음 G#-C가 augmented triad와 일치)
+- maj7/m7/7/sus2/sus4/dim/aug 등 풍부한 quality 라벨
+
+같은 곡에서 비교:
+| 지표 | autochord | chordino |
+|---|---|---|
+| 코드 종류 수 | 10 (maj/min만) | 30+ |
+| 7th 텐션 검출 | 0% | 다수 정확 |
+| E7(#5) | ✗ (D로 오인) | ✓ (Eaug) |
+
+**부작용 + 후속 처리**
+chordino도 비다이어토닉 잡음(`Bm7b5`, `Am7b5`, `Bbm6`, `F#aug`)을 새로 만들어냄. 키 감지(qm-keydetector) + 다이어토닉 보정으로 해결. "비다이어토닉 + 짧은 segment(<3s)"만 가까운 다이어토닉으로 스냅하고, secondary dominant(E7, A7, G7 등) borrowed 코드는 보존하는 규칙.
+
+**배운 점**
+- 딥러닝 모델의 라벨셋 ≠ 실제 출력 분포. 어휘를 가졌다고 다 잡지 않음.
+- 알고리즘마다 노이즈 패턴이 다름. chordino는 "비다이어토닉 노이즈"를 만들고, autochord는 "트라이어드 단순화 노이즈"를 만듦.
+- 키/장르 사전 지식을 후처리에 주입하면 알고리즘 노이즈를 음악적 룰로 거를 수 있음.
+
+---
+
+## 9. chroma 기반 sus4 검출 시도와 한계
+
+**원래 계획**
+사용자 곡에 `Gsus4`가 있음. chordino도 sus4는 잘 못 잡으니까(이 곡에선 `Gsus4` → `G`로 통합), **per-segment chroma 분석**으로 추가 검출 시도. 로직: G로 인식된 segment에서 chroma의 4음(C)이 3음(B)보다 강하면 → Gsus4.
+
+**발생한 문제**
+**두 곡 연속 sus4 검출 0개**.
+- 유재하 곡: chroma의 G segment에서 C(4음)가 어떤 0.5초 윈도우에서도 B(3음)보다 강하지 않음. 핑거스타일이라 sus → 해결을 빠르게 거치면서 4음이 차분하게 안 깔림.
+- Bon Jovi - Wanted Dead or Alive: 사용자 chord chart가 `Dsus4 D Dsus2 D` 패턴인데도 같은 결과. chroma 진단:
+  ```
+  D = 1.00 (압도적)
+  F#(M3) = 0.06~0.18
+  G(P4) = 0.04~0.20
+  E(P2) = 0.05~0.22
+  ```
+  12현 어쿠스틱이 D 루트를 옥타브로 쌓아서 다른 음들이 상대적으로 매우 약함.
+
+**원인**
+chroma 기반 sus 검출은 "이상적 조건"에서만 동작:
+- sus 코드가 sustained(수 초 이상)
+- 4음이 다른 음 대비 충분히 voicing됨
+
+실제 녹음에서는 보통:
+- sus는 짧게 거치고 해결됨 → 평균 chroma에 묻힘
+- 루트가 옥타브 doubling/sustaining으로 압도적 → 상부 음들이 모두 약함
+
+**해결**
+**기능 자체 제거**. `sus_detector.py` 삭제. 이상치 걸러내려 추가한 절대 강도 체크(>= 0.4 of root)에서 모든 후보가 제거되니, 모듈 자체가 무용.
+
+**배운 점**
+- 음악 이론적으로 명백한 차이("3음 vs 4음")가 신호처리에서는 detect 가능을 보장 안 함.
+- 라이브 녹음의 chroma는 의외로 root에 강하게 편향됨 (옥타브 doubling, 베이스 sustain).
+- 두 종류 곡(빠른 ballad sus + 12현 strum sus)에서 모두 실패하면, 알고리즘 한계로 인정하고 빨리 제거. "이론상 동작해야 하는" 모듈을 무리해서 유지하면 유지보수 부담만 늘어남.
+- Sub-window 분석으로 평균 효과를 줄이는 방법도 가능하지만, 절대 강도 부족이 본질이라 효과 보장 안 됨.
+
+---
+
+## 10. 베이스 음 검출로 상부구조 substitution 정정
+
+**원래 계획**
+chordino + 다이어토닉 보정 후에도 남은 핵심 오류:
+- `CM7` ↔ `Em7` 모호성 (둘 다 EGB 공유, root만 다름 — C vs E)
+- `Bm7` ↔ `D` 모호성 (둘 다 D-F#-A 공유)
+- `C/D` 슬래시 코드의 베이스 음 오인
+
+이 셋 모두 **베이스 음이 결정**. demucs가 이미 분리해 놓은 bass stem에서 segment별 dominant pitch를 뽑으면 해결될 거라 가설.
+
+**발생한 문제**
+처음 구현 시 너무 aggressive — 신뢰도 1.5 이상 segment에 다 베이스 보정 적용하니 `Em/G`, `G/B`, `Am/D#` 같은 어색한 slash가 다수 등장. 또 인접 코드 transition 부분에서 베이스 음이 흔들려 false positive.
+
+**원인 + 해결**
+- 신뢰도 임계값 너무 낮음 → 1.5 → **2.5로 상향**. top1/top2 chroma 비율로 측정.
+- 베이스 정정 후 결과가 키의 다이어토닉/borrowed에 들어와야만 채택 (음악적 타당성 게이트)
+
+핵심 정정 룰:
+```
+chordino "Em7" + 베이스=C → "Cmaj7"      (m7 root - 4 = maj7 root)
+chordino "D"   + 베이스=B → "Bm7"        (maj root - 3 = m7 root)
+chordino 그 외 + 다른 베이스 → slash 표기 (예: "C/E")
+```
+
+같은 곡에서 결과:
+- ✅ Bm7 회복 6군데 (chordino "D" → "Bm7")
+- ✅ 슬래시 코드 베이스 정정
+- ⚠️ CM7 ↔ Em7는 부분적 — 핑거스타일 보이싱이 실제 E를 베이스로 두는 경우도 있어 음악적으로 모호
+
+**배운 점**
+- 상부구조 substitution은 **베이스 검출로 결정론적으로 풀 수 있다** (최소 룰 베이스로). 새 의존성 없이 demucs의 기존 출력 활용.
+- 음악적 타당성 가드(다이어토닉/borrowed 체크) 없이 raw 베이스 검출만 따라가면 노이즈 다수 도입.
+- 핑거스타일 곡에서 베이스가 항상 chord root는 아님 — 실제 녹음의 ambiguity는 알고리즘 한계가 아니라 음악적 모호성.
+
+---
+
+## 11. 라벨 표기 정규화 (Harte 표기 + music21 호환)
+
+**원래 계획**
+chordino의 출력을 그대로 다음 단계(LLM 편곡, 악보 생성)로 전달.
+
+**발생한 문제**
+chordino의 슬래시 코드 표기가 사용자 친화적이지 않음:
+- `C/5` (interval-based: 5도 = G in bass) → 사용자는 `C/G` 로 보고 싶음
+- `D/2` (interval-based: 2도 = E in bass) → `D/E` 가 자연스러움
+
+또 music21이 일부 표기를 못 받음:
+- `Dmaj6` → `Invalid chord abbreviation 'maj6'`
+- `Cmaj9` → `Invalid 'maj9'`
+- `mMaj7` → `Invalid 'mMaj7'`
+
+**원인**
+- Harte 표기는 학술 chord recognition의 표준이지만 일반 사용자 표기와 다름.
+- music21의 `harmony.ChordSymbol` 어휘가 제한적. major 6/9/min-major7 같은 일부 quality는 다른 표기를 요구.
+
+**해결**
+`chord_postprocess.normalize_label()` + `chord_to_string()`에 매핑 추가:
+```
+maj6 → 6        (major 6은 관용적으로 그냥 "6")
+maj9 → maj7     (lossy — 9th 손실, music21 미지원)
+minmaj7 → mM7   (music21 표기)
+C/5 → C/G       (interval → 음 이름 변환)
+```
+
+마지막에 모든 segment 라벨을 `normalize_label()` 통과시켜 정규화. 결과: 모든 라벨이 사람이 읽기 쉽고 music21이 파싱 가능.
+
+**배운 점**
+- 라이브러리 간 chord 표기 호환성을 미리 확인 안 하면 다음 단계에서 silent fail (악보의 코드가 휴지부로 대체됨).
+- "내부 처리 표기" 와 "출력 표기" 분리 — 내부에선 정확한 quality 추적, 출력만 호환 표기로.
+- Lossy 매핑이 필요할 때(예: maj9 → maj7) 명시적으로 문서화.
+
+---
+
+## 12. demucs stem 결과 캐싱
+
+**원래 계획**
+chordino_extractor와 bass_detector가 각자 demucs를 호출.
+
+**발생한 문제**
+demucs 분리는 ~30초 걸림. 두 모듈이 따로 호출하면 같은 곡에 대해 60초. 명백한 낭비.
+
+**해결**
+`audio_analysis.py`에 모듈 레벨 dict 캐시 추가:
+```python
+_separation_cache: dict = {}  # key: f"{path}:{mtime}", value: (stems_dict, sr)
+
+def separate_all_stems(audio_path: Path):
+    cache_key = f"{audio_path.resolve()}:{audio_path.stat().st_mtime}"
+    if cache_key in _separation_cache:
+        return _separation_cache[cache_key]
+    # ... demucs 실행 ...
+    _separation_cache[cache_key] = (stems, sr)
+    return stems, sr
+```
+
+같은 process 안에서 모든 모듈이 같은 분리 결과 공유. mtime을 키에 포함해서 파일이 바뀌면 자동 재계산.
+
+**배운 점**
+- 무거운 연산 결과를 함수 호출 단위가 아니라 process 단위 캐시로 관리.
+- 캐시 키에 mtime 포함하면 파일 변경 시 stale 캐시 자동 무효화.
+- 모듈 레벨 dict는 단일 process 캐시로 충분(Backend는 multi-worker라도 worker별 캐시면 OK).
+
+---
+
 ## 정리: 같은 종류 이슈가 다시 오면 봐야 할 곳
 
 1. **인증/세션 안 됨** → FastAPI에서 `Response`를 직접 반환하는지 vs Pydantic 반환하는지 확인. 둘이 헤더 처리 방식 다름.
@@ -253,3 +431,9 @@ pip install setuptools wheel
 4. **Keras 모델 로딩 실패** → TF 2.16 이후 Keras 3 도입. `tf-keras` + `TF_USE_LEGACY_KERAS=1`.
 5. **native plugin 인식 안 됨** → `file <path>`로 아키텍처 먼저 확인. macOS arm64 wheel/binary가 빠진 경우가 잦다.
 6. **알고리즘 결과가 별로** → 알고리즘의 표현력(어떤 출력을 표현 가능한가)과 입력 신호 품질을 분리해서 본다. 둘 중 어디가 진짜 병목인지 먼저 파악.
+7. **코드 인식기가 텐션을 안 잡음** → autochord BTC는 라벨셋에 있어도 거의 안 출력. chordino의 Harte syntax(`usehartesyntax=1`)가 더 풍부.
+8. **코드 인식기가 잡음 코드를 만듦** → 키 감지(qm-keydetector) + 다이어토닉 보정으로 후처리. "비다이어토닉 + 짧은 segment"만 스냅, borrowed 코드는 보존.
+9. **상부구조 substitution(CM7 ↔ Em7 등)** → demucs bass stem + chroma_cqt로 segment별 dominant pitch 추출 후 룰 베이스 정정.
+10. **chroma 기반 sus/9 검출** → 이상적 조건에서만 동작. 빠른 패턴 또는 root-dominant 녹음에서는 실패. 두 곡 실패하면 빨리 포기.
+11. **chord 라벨이 다음 단계에서 silent fail** → music21 같은 downstream 라이브러리의 어휘 제한 미리 확인. 호환 표기로 매핑.
+12. **무거운 연산 중복 호출** → 모듈 레벨 dict 캐시(키에 mtime 포함)로 process 단위 공유.

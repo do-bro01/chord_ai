@@ -215,6 +215,11 @@ def analyze_with_timing(path: str | Path) -> List[Tuple[float, float, str]]:
         log.warning("bass correction failed (%s) — using diatonic-only result", e)
         s3 = s2
 
+    # 5. 최종 라벨 정규화 (Harte `C/5` 같은 잔여 표기를 `C/G`로)
+    from chord_postprocess import normalize_label
+    s3 = [(start, end, normalize_label(c)) for start, end, c in s3]
+    s3 = merge_consecutive(s3)
+
     return s3
 
 

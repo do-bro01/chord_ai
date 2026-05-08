@@ -156,7 +156,14 @@ def _canonical_quality(q: str) -> str:
 
 
 def chord_to_string(parsed: ParsedChord) -> str:
-    """ParsedChord → 사람이 읽는 문자열."""
+    """ParsedChord → 사람이 읽는 문자열.
+
+    quality suffix는 music21.harmony.ChordSymbol이 파싱 가능한 표기로 통일.
+    호환 안 되는 표기(`maj6`, `maj9`, `mMaj7`)는 가장 가까운 호환 표기로 매핑.
+      - maj6 → 6   (major 6 is conventionally just "6")
+      - maj9 → maj7 (lossy — 9th 텐션 손실, music21 미지원)
+      - minmaj7 → mM7 (music21 표기)
+    """
     root = _PC_TO_NOTE[parsed.root_pc]
     quality_str = {
         "maj": "",
@@ -170,13 +177,13 @@ def chord_to_string(parsed: ParsedChord) -> str:
         "aug": "aug",
         "sus2": "sus2",
         "sus4": "sus4",
-        "minmaj7": "mMaj7",
+        "minmaj7": "mM7",
         "9": "9",
         "m9": "m9",
-        "maj9": "maj9",
+        "maj9": "maj7",
         "6": "6",
         "m6": "m6",
-        "maj6": "maj6",
+        "maj6": "6",
     }.get(parsed.quality, parsed.quality)
     out = f"{root}{quality_str}"
     if parsed.bass_pc is not None and parsed.bass_pc != parsed.root_pc:
@@ -469,6 +476,17 @@ def chord_pitch_classes(parsed: ParsedChord) -> set:
     return {(r + i) % 12 for i in intervals}
 
 
+def normalize_label(label: str) -> str:
+    """chordino의 Harte 슬래시(`C/5`, `D/2`)를 음 이름 슬래시(`C/G`, `D/E`)로 정규화.
+
+    모든 라벨이 사용자에게 읽기 쉬운 형태로 나가도록 마지막 단계에서 호출.
+    """
+    parsed = parse_chord(label)
+    if parsed is None:
+        return label
+    return chord_to_string(parsed)
+
+
 def apply_bass_correction(
     segments_with_bass: List[Tuple[float, float, str, Optional[int], float]],
     key_root: str = "G",
@@ -480,19 +498,20 @@ def apply_bass_correction(
     bass_pc=None이면 신뢰도 부족 → 정정 안 함.
 
     정정 규칙:
-      1. 베이스가 chord_root와 같음 → 그대로
+      1. 베이스가 chord_root와 같음 → 그대로 (단 라벨은 음 이름 표기로 정규화)
       2. m7 코드 + 베이스가 root - 4 (장3도 아래) → maj7 코드로 (Em7+bass=C → Cmaj7)
       3. major 트라이어드 + 베이스가 root - 3 (단3도 아래) → m7 코드로 (D+bass=B → Bm7)
       4. 베이스가 chord 구성음 안에 있음 → 인버전(slash) 표기 (단, root 외)
       5. 베이스가 chord 구성음 밖 → slash 표기 (poly-chord 표기, 예: C/D)
 
-      단, 정정 후 결과가 키의 다이어토닉/borrowed 안에 들어와야 채택. 안 그러면 원본 유지
-      (베이스 검출 노이즈로 엉뚱한 코드로 가는 걸 방지).
+      단, 정정 후 결과가 키의 다이어토닉/borrowed 안에 들어와야 채택. 안 그러면 원본 유지.
+
+    모든 출력 라벨은 마지막에 normalize_label로 정규화 (Harte `C/5` → `C/G` 등).
     """
     out: List[Segment] = []
     for start, end, label, bass_pc, conf in segments_with_bass:
         if bass_pc is None:
-            out.append((start, end, label))
+            out.append((start, end, normalize_label(label)))
             continue
 
         parsed = parse_chord(label)
@@ -502,12 +521,12 @@ def apply_bass_correction(
 
         current_bass = parsed.bass_pc if parsed.bass_pc is not None else parsed.root_pc
         if bass_pc == current_bass:
-            out.append((start, end, label))
+            out.append((start, end, normalize_label(label)))
             continue
 
         new_label = _try_bass_correction(parsed, bass_pc, key_root, key_mode)
         if new_label is None:
-            out.append((start, end, label))
+            out.append((start, end, normalize_label(label)))
         else:
             log.info("bass-correct: %s @[%.2f-%.2f] bass=%s conf=%.1f → %s",
                      label, start, end, _PC_TO_NOTE[bass_pc], conf, new_label)
