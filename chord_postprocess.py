@@ -438,6 +438,119 @@ def apply_diatonic_correction(
     return out
 
 
+def chord_pitch_classes(parsed: ParsedChord) -> set:
+    """ParsedChord → 구성음 pitch class 집합.
+
+    텐션이 명시된 quality는 그대로 반영. 주요 quality만 다룸 — 알 수 없는 quality는 트라이어드로 fallback.
+    """
+    r = parsed.root_pc
+    # 주요 quality별 인터벌 (semitones from root)
+    intervals_by_quality = {
+        "maj":      [0, 4, 7],
+        "min":      [0, 3, 7],
+        "maj7":     [0, 4, 7, 11],
+        "m7":       [0, 3, 7, 10],
+        "7":        [0, 4, 7, 10],
+        "dim":      [0, 3, 6],
+        "dim7":     [0, 3, 6, 9],
+        "m7b5":     [0, 3, 6, 10],
+        "aug":      [0, 4, 8],
+        "sus4":     [0, 5, 7],
+        "sus2":     [0, 2, 7],
+        "minmaj7":  [0, 3, 7, 11],
+        "9":        [0, 4, 7, 10, 2],
+        "m9":       [0, 3, 7, 10, 2],
+        "maj9":     [0, 4, 7, 11, 2],
+        "6":        [0, 4, 7, 9],
+        "m6":       [0, 3, 7, 9],
+        "maj6":     [0, 4, 7, 9],
+    }
+    intervals = intervals_by_quality.get(parsed.quality, [0, 4, 7])
+    return {(r + i) % 12 for i in intervals}
+
+
+def apply_bass_correction(
+    segments_with_bass: List[Tuple[float, float, str, Optional[int], float]],
+    key_root: str = "G",
+    key_mode: str = "major",
+) -> List[Segment]:
+    """검출된 베이스 음을 이용해 chord 라벨 정정.
+
+    입력: [(start, end, chord_label, bass_pc, confidence), ...]
+    bass_pc=None이면 신뢰도 부족 → 정정 안 함.
+
+    정정 규칙:
+      1. 베이스가 chord_root와 같음 → 그대로
+      2. m7 코드 + 베이스가 root - 4 (장3도 아래) → maj7 코드로 (Em7+bass=C → Cmaj7)
+      3. major 트라이어드 + 베이스가 root - 3 (단3도 아래) → m7 코드로 (D+bass=B → Bm7)
+      4. 베이스가 chord 구성음 안에 있음 → 인버전(slash) 표기 (단, root 외)
+      5. 베이스가 chord 구성음 밖 → slash 표기 (poly-chord 표기, 예: C/D)
+
+      단, 정정 후 결과가 키의 다이어토닉/borrowed 안에 들어와야 채택. 안 그러면 원본 유지
+      (베이스 검출 노이즈로 엉뚱한 코드로 가는 걸 방지).
+    """
+    out: List[Segment] = []
+    for start, end, label, bass_pc, conf in segments_with_bass:
+        if bass_pc is None:
+            out.append((start, end, label))
+            continue
+
+        parsed = parse_chord(label)
+        if parsed is None:
+            out.append((start, end, label))
+            continue
+
+        current_bass = parsed.bass_pc if parsed.bass_pc is not None else parsed.root_pc
+        if bass_pc == current_bass:
+            out.append((start, end, label))
+            continue
+
+        new_label = _try_bass_correction(parsed, bass_pc, key_root, key_mode)
+        if new_label is None:
+            out.append((start, end, label))
+        else:
+            log.info("bass-correct: %s @[%.2f-%.2f] bass=%s conf=%.1f → %s",
+                     label, start, end, _PC_TO_NOTE[bass_pc], conf, new_label)
+            out.append((start, end, new_label))
+    return out
+
+
+def _try_bass_correction(
+    parsed: ParsedChord,
+    bass_pc: int,
+    key_root: str,
+    key_mode: str,
+) -> Optional[str]:
+    """베이스 정정 후 라벨을 만들고, 결과가 음악적으로 타당하면 반환. 아니면 None."""
+    chord_pcs = chord_pitch_classes(parsed)
+
+    # Rule 2: m7 + 베이스가 root - 4 → maj7 (상부구조 substitution)
+    if parsed.quality == "m7":
+        target_root = (parsed.root_pc - 4) % 12
+        if bass_pc == target_root:
+            new_chord = ParsedChord(target_root, "maj7", None, parsed.raw)
+            new_label = chord_to_string(new_chord)
+            return new_label if _is_acceptable(new_chord, key_root, key_mode) else None
+
+    # Rule 3: major + 베이스가 root - 3 → m7 (상부구조 substitution)
+    if parsed.quality in ("maj", "maj7", "6", "maj9"):
+        target_root = (parsed.root_pc - 3) % 12
+        if bass_pc == target_root:
+            new_chord = ParsedChord(target_root, "m7", None, parsed.raw)
+            new_label = chord_to_string(new_chord)
+            return new_label if _is_acceptable(new_chord, key_root, key_mode) else None
+
+    # Rule 4 + 5: slash 표기 (root와 다른 베이스)
+    new_chord = ParsedChord(parsed.root_pc, parsed.quality, bass_pc, parsed.raw)
+    return chord_to_string(new_chord) if _is_acceptable(new_chord, key_root, key_mode) else None
+
+
+def _is_acceptable(parsed: ParsedChord, key_root: str, key_mode: str) -> bool:
+    """음악적 타당성 — diatonic 또는 borrowed면 OK. foreign이면 거부."""
+    cat = chord_membership(parsed, key_root, key_mode)
+    return cat in ("diatonic", "borrowed")
+
+
 def detect_key(audio_path: str) -> Tuple[str, str]:
     """qm-keydetector로 곡 전체 키 추정.
 
