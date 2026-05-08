@@ -1,9 +1,18 @@
-librosa>=0.10
+# 코드 추출 파이프라인 (demucs + autochord)
+demucs>=4.0.1
+autochord>=0.1.4
+torch>=2.2
+torchaudio>=2.2
+tensorflow>=2.16
+
+# 악보 / 오디오 생성
 music21>=9.1
 pretty_midi>=0.2.10
 pyfluidsynth>=1.3.3
 numpy
 scipy
+
+# LLM
 openai>=1.40
 python-dotenv
 
