@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import {
@@ -14,6 +14,7 @@ const GENRES: Genre[] = ["City Pop", "Jazz", "Ballad", "Lo-fi", "Bossa Nova"];
 const PLACEHOLDER = "C - Am - F - G";
 
 const STORAGE_KEY = "chord_ai.arrange_request";
+const PREFILL_KEY = "chord_ai.prefill_chords";
 
 function parseChords(raw: string): string[] {
   return raw
@@ -30,6 +31,33 @@ export default function ChordInput() {
   const [genre, setGenre] = useState<Genre>("Jazz");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [fromExtract, setFromExtract] = useState(false);
+
+  // /extract 흐름에서 넘어왔으면 sessionStorage에 들어있는 prefill을 읽어 textarea에 채움
+  useEffect(() => {
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(PREFILL_KEY);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    try {
+      const chords = JSON.parse(raw) as string[];
+      if (Array.isArray(chords) && chords.length > 0) {
+        setChordsRaw(chords.join(" - "));
+        setFromExtract(true);
+      }
+    } catch {
+      // ignore malformed
+    } finally {
+      try {
+        sessionStorage.removeItem(PREFILL_KEY);
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
 
   const onSubmit = () => {
     const chords = parseChords(chordsRaw);
