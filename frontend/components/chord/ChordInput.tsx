@@ -108,6 +108,16 @@ export default function ChordInput() {
 
   return (
     <div className="rounded-3xl border border-white/10 bg-[var(--background-elevated)]/50 px-8 py-10 flex flex-col gap-6">
+      {fromExtract && (
+        <div className="rounded-2xl border border-amber-200/20 bg-amber-200/5 px-4 py-3">
+          <p className="text-xs text-amber-200/90">
+            음원에서 추출된 코드가 채워졌습니다. 정확하지 않을 수 있으니 필요하면 직접 수정하세요.
+          </p>
+          <p className="mt-1 text-[11px] text-amber-200/50">
+            sus, 9th/11th 같은 텐션은 감지되지 않으며 일부 코드(CM7 ↔ Em7 등)는 모호할 수 있습니다.
+          </p>
+        </div>
+      )}
       <div>
         <label
           htmlFor="chords"
