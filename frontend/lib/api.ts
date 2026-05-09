@@ -94,6 +94,105 @@ export const audioApi = {
   },
 };
 
+// ============================================================================
+// Arrange / Preview / Export (PRD v2 신규)
+// ============================================================================
+
+export type Genre = "City Pop" | "Jazz" | "Ballad" | "Lo-fi" | "Bossa Nova";
+export type Complexity = "단순" | "보통" | "복잡";
+export type Tension = "적음" | "보통" | "많음";
+export type BassStyle = "루트 중심" | "부드러운 연결" | "워킹 베이스";
+export type Rhythm = "안정적" | "싱코페이션" | "펑키함";
+
+export interface ArrangementOptions {
+  genre: Genre;
+  complexity: Complexity;
+  tension: Tension;
+  bass_style: BassStyle;
+  rhythm: Rhythm;
+}
+
+export interface ArrangeRequest {
+  current_chords: string[];
+  key: string;
+  bpm: number;
+  time_signature: string;
+  section_size_bars: number;
+  options: ArrangementOptions;
+  free_text?: string | null;
+}
+
+export interface ChordValidation {
+  label: string;
+  normalized: string;
+  music21_ok: boolean;
+  membership: "diatonic" | "borrowed" | "foreign" | "unparseable";
+  issue: string | null;
+}
+
+export interface ValidationReport {
+  foreign_count: number;
+  unparseable_count: number;
+  music21_failures: string[];
+  has_issues: boolean;
+  chords: ChordValidation[];
+}
+
+export interface ArrangeResponse {
+  chords: string[];
+  rationale: string;
+  warnings: string[];
+  validation: ValidationReport;
+}
+
+export type ExportFormat = "musicxml" | "midi" | "pdf";
+
+export interface ExportRequest {
+  chords: string[];
+  format: ExportFormat;
+  bpm: number;
+  beats_per_bar: number;
+  title?: string;
+}
+
+async function fetchBinary(path: string, body: unknown): Promise<Blob> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let detail: ApiErrorDetail | string = "요청에 실패했습니다.";
+    try {
+      const parsed = text ? JSON.parse(text) : null;
+      if (parsed?.detail) detail = parsed.detail;
+    } catch {
+      detail = text || detail;
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.blob();
+}
+
+export const arrangeApi = {
+  arrange: (req: ArrangeRequest) =>
+    apiFetch<ArrangeResponse>("/api/arrange", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+
+  preview: (chords: string[], bpm: number, beatsPerBar: number) =>
+    fetchBinary("/api/preview", {
+      chords,
+      bpm,
+      beats_per_bar: beatsPerBar,
+    }),
+
+  export: (req: ExportRequest) => fetchBinary("/api/export", req),
+};
+
 export const authApi = {
   requestSignupCode: (email: string) =>
     apiFetch<void>("/auth/signup/request-code", {
