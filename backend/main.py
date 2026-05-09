@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.arrange import router as arrange_router
 from backend.api.audio import router as audio_router
 from backend.auth.routes import router as auth_router
 from backend.config import get_settings
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(audio_router)
+    app.include_router(arrange_router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

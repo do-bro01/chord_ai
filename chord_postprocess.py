@@ -616,3 +616,122 @@ def postprocess(
     log.info("after diatonic correction + merge: %d segments", len(s2))
 
     return s2
+
+
+# ============================================================================
+# LLM 출력 검증 (PRD v2: 룰 베이스 검증 레이어)
+# ============================================================================
+#
+# 목적: LLM이 뱉은 편곡 결과를 그대로 신뢰하지 않고, 음악 이론·표기 룰로
+# 한 번 거른다. 이슈 11번에서 본 "music21 파싱 silent fail"을 이 단계에서
+# 차단하고, 키 이탈(foreign chord)이 과도하면 LLM 재요청 신호로 사용한다.
+
+
+@dataclass
+class ChordValidation:
+    """단일 코드 검증 결과."""
+    label: str                  # LLM 원본 라벨
+    normalized: str             # normalize_label 결과
+    music21_ok: bool            # music21.harmony.ChordSymbol 파싱 가능 여부
+    membership: str             # 'diatonic' | 'borrowed' | 'foreign' | 'unparseable'
+    issue: Optional[str]        # 문제 설명 (없으면 None)
+
+
+@dataclass
+class ValidationReport:
+    """편곡 한 섹션 전체의 검증 리포트."""
+    chords: List[ChordValidation]
+    foreign_count: int          # 키와 관계 없는 코드 개수
+    unparseable_count: int      # parse_chord 실패 개수
+    music21_failures: List[str] # music21이 못 읽는 라벨들
+    has_issues: bool            # 위 셋 중 하나라도 있으면 True
+
+
+def validate_music21_parse(label: str) -> bool:
+    """music21.harmony.ChordSymbol이 파싱 가능한지 확인.
+
+    정규화된 라벨에 대해 호출하는 것을 전제로 한다 (chord_to_string 출력).
+    """
+    if not label:
+        return False
+    try:
+        from music21 import harmony
+        harmony.ChordSymbol(label)
+        return True
+    except Exception:  # ChordException, ValueError, etc.
+        return False
+
+
+def validate_arrangement(
+    chords: List[str],
+    key_root: str,
+    key_mode: str = "major",
+) -> ValidationReport:
+    """LLM이 뱉은 코드 진행을 검증.
+
+    각 코드에 대해:
+      1. normalize_label로 표기 정규화 (Harte 슬래시 → 음 이름, music21 미지원 표기 매핑)
+      2. music21.harmony.ChordSymbol로 파싱 가능한지 확인
+      3. parse_chord로 root/quality 분리 → chord_membership으로 키 안 위치 판정
+
+    이 함수는 자동 수정하지 않는다. 호출자가 리포트를 보고:
+      - foreign이 많으면 LLM에 재요청
+      - music21_failures가 있으면 export 단계에서 silent fail 방지를 위해 처리
+      - 임의로 nearest_diatonic 적용 가능 (선택)
+    """
+    items: List[ChordValidation] = []
+    foreign_count = 0
+    unparseable_count = 0
+    music21_failures: List[str] = []
+
+    for raw in chords:
+        normalized = normalize_label(raw)
+        m21_ok = validate_music21_parse(normalized)
+        if not m21_ok:
+            music21_failures.append(normalized)
+
+        parsed = parse_chord(normalized)
+        if parsed is None:
+            unparseable_count += 1
+            membership = "unparseable"
+            issue = f"코드 파싱 실패: {raw!r}"
+        else:
+            membership = chord_membership(parsed, key_root, key_mode)
+            if membership == "foreign":
+                foreign_count += 1
+                issue = f"키({key_root} {key_mode}) 외 코드"
+            elif not m21_ok:
+                issue = "music21 파싱 불가 (export 단계 silent fail 위험)"
+            else:
+                issue = None
+
+        items.append(ChordValidation(
+            label=raw,
+            normalized=normalized,
+            music21_ok=m21_ok,
+            membership=membership,
+            issue=issue,
+        ))
+
+    has_issues = bool(music21_failures) or foreign_count > 0 or unparseable_count > 0
+    return ValidationReport(
+        chords=items,
+        foreign_count=foreign_count,
+        unparseable_count=unparseable_count,
+        music21_failures=music21_failures,
+        has_issues=has_issues,
+    )
+
+
+def parse_key_string(key: str) -> Tuple[str, str]:
+    """'C major', 'A minor' 형태의 키 문자열을 (root, mode)로 분리.
+
+    LLM 입력 스키마는 'C major' 같은 문자열을 쓰지만, 검증 함수들은
+    (root, mode) 튜플을 받는다. 이 헬퍼로 변환.
+    """
+    parts = key.strip().split()
+    root = parts[0] if parts else "C"
+    mode = parts[1].lower() if len(parts) > 1 else "major"
+    if mode not in ("major", "minor"):
+        mode = "major"
+    return (root, mode)
