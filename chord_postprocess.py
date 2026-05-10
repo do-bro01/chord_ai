@@ -735,3 +735,64 @@ def parse_key_string(key: str) -> Tuple[str, str]:
     if mode not in ("major", "minor"):
         mode = "major"
     return (root, mode)
+
+
+def function_table_text(key: str) -> str:
+    """LLM 프롬프트 주입용 — 주어진 키의 다이어토닉 + secondary dominant 표를 텍스트로.
+
+    예: 'G major' →
+        G major
+          Diatonic: I=G, ii=Am, iii=Bm, IV=C, V=D, vi=Em, vii°=F#dim
+          Secondary dominants: V/ii=E7, V/iii=F#7, V/IV=G7, V/V=A7, V/vi=B7
+    """
+    root, mode = parse_key_string(key)
+    root_pc = _NOTE_TO_PC.get(root)
+    if root_pc is None:
+        return f"{key} (unknown root)"
+
+    if mode == "minor":
+        diatonic_specs = [
+            (0, "i", "m"),
+            (2, "ii°", "m7b5"),
+            (3, "bIII", ""),
+            (5, "iv", "m"),
+            (7, "v", "m"),
+            (8, "bVI", ""),
+            (10, "bVII", ""),
+        ]
+        # 자연단음계 기준이지만, V (메이저)도 자주 차용됨 (harmonic minor V7)
+        sec_dom_specs = [(3, "bIII"), (5, "iv"), (7, "v"), (8, "bVI"), (10, "bVII")]
+    else:
+        diatonic_specs = [
+            (0, "I", ""),
+            (2, "ii", "m"),
+            (4, "iii", "m"),
+            (5, "IV", ""),
+            (7, "V", ""),
+            (9, "vi", "m"),
+            (11, "vii°", "dim"),
+        ]
+        sec_dom_specs = [(2, "ii"), (4, "iii"), (5, "IV"), (7, "V"), (9, "vi")]
+
+    diatonic = []
+    for offset, roman, qual in diatonic_specs:
+        note = _PC_TO_NOTE[(root_pc + offset) % 12]
+        diatonic.append(f"{roman}={note}{qual}")
+
+    sec_dom = []
+    for offset, target in sec_dom_specs:
+        target_pc = (root_pc + offset) % 12
+        v_pc = (target_pc + 7) % 12
+        sec_dom.append(f"V/{target}={_PC_TO_NOTE[v_pc]}7")
+
+    extra = ""
+    if mode == "minor":
+        extra = "\n  Note: 도미넌트 해결 시 v(마이너) 대신 V(메이저, 예: " \
+                f"{_PC_TO_NOTE[(root_pc + 7) % 12]})를 차용하는 게 일반적."
+
+    return (
+        f"{root} {mode}\n"
+        f"  Diatonic: {', '.join(diatonic)}\n"
+        f"  Secondary dominants: {', '.join(sec_dom)}"
+        f"{extra}"
+    )
